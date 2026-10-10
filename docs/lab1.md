@@ -99,7 +99,7 @@ El pipeline se implementa con **GitHub Actions** y aplica los siguientes concept
 > Luego las imágenes se mostrarán automáticamente en este documento gracias a la
 > sintaxis Markdown ya dejada lista (`![descripción](ruta)`).
 
-### 2.1 Pipeline automático para desplegar (`workflows/ci.yml`)
+### 2.1 Pipeline automático para desplegar (`.github/workflows/ci.yml`)
 
 Pasos sugeridos para capturar la evidencia:
 1. Haz push a `main` (o dispara `workflow_dispatch` en **CI/CD Pipeline (Lab 1)**).
