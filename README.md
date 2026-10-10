@@ -17,9 +17,13 @@ devops-lab/
 ├── tests/
 │   └── test_greeting.py        # Pruebas unitarias con pytest + TestClient
 ├── scripts/
-│   └── deploy.sh               # Script idempotente de despliegue a ECS/EC2 vía AWS CLI
+│   ├── deploy.sh                # Script idempotente de despliegue a ECS/EC2 vía AWS CLI
+│   └── destroy.sh               # Script idempotente de destrucción de toda la infraestructura
 ├── workflows/
 │   └── ci.yml                  # Definición del pipeline CI/CD (GitHub Actions)
+├── .github/
+│   └── workflows/
+│       └── destroy.yml         # Workflow manual (workflow_dispatch) para destruir infraestructura
 ├── Dockerfile                  # Imagen de contenedor para la app FastAPI
 ├── pyproject.toml              # Dependencias y configuración (Poetry, pylint)
 ├── poetry.lock                 # Lockfile de dependencias
@@ -27,9 +31,12 @@ devops-lab/
 └── devops-lab1-starter.zip     # Material base/plantilla original del laboratorio
 ```
 
-> **Nota:** el archivo de workflow vive en [`workflows/ci.yml`](./workflows/ci.yml). Para
-> que GitHub Actions lo ejecute automáticamente debe copiarse (o enlazarse) a la ruta
-> estándar `.github/workflows/ci.yml` del repositorio.
+> **Nota:** el archivo de workflow principal vive en [`workflows/ci.yml`](./workflows/ci.yml).
+> Para que GitHub Actions lo ejecute automáticamente debe copiarse (o enlazarse) a la ruta
+> estándar `.github/workflows/ci.yml` del repositorio. El workflow de destrucción
+> ([`destroy.yml`](./.github/workflows/destroy.yml)) sí está ubicado correctamente en
+> `.github/workflows/`, por lo que ya aparece disponible para ejecución manual desde la
+> pestaña *Actions* de GitHub.
 
 ## Aplicación
 
@@ -130,6 +137,37 @@ Ejecución manual de ejemplo:
 
 ```bash
 STUDENT_SUFFIX=mi-usuario AWS_REGION=us-east-1 bash scripts/deploy.sh
+```
+
+## Workflow de destrucción ([`.github/workflows/destroy.yml`](./.github/workflows/destroy.yml))
+
+Workflow que **solo puede ejecutarse bajo demanda** (`workflow_dispatch`), nunca por
+`push` ni `pull_request`, para evitar que la infraestructura se borre accidentalmente.
+Para dispararlo hay que ir a la pestaña **Actions → Destroy Infrastructure (Lab 1) →
+Run workflow** e indicar:
+
+- `student_suffix` *(opcional)* — Sufijo de los recursos a destruir. Si se omite, usa
+  `vars.STUDENT_SUFFIX` o el default `test-student`.
+- `confirm` *(obligatorio)* — Debe escribirse literalmente `destroy`; si no coincide,
+  el job falla de inmediato como salvaguarda antes de tocar cualquier recurso.
+
+El job `destroy` configura las credenciales AWS y ejecuta
+[`scripts/destroy.sh`](./scripts/destroy.sh), que elimina de forma idempotente (ignora
+recursos que ya no existan):
+
+- Servicio ECS (escalado a 0 y eliminado) y Capacity Providers asociados.
+- Auto Scaling Group (`force-delete`) y espera a que las instancias EC2 terminen.
+- Clúster ECS y Launch Template.
+- Security Group (con reintentos por desasociación de interfaces de red).
+- Roles e Instance Profile de IAM (instancia EC2 y ejecución de tareas ECS).
+- Repositorio ECR (`--force`, incluidas las imágenes).
+- Log Group de CloudWatch (`/ecs/<app>-<suffix>`).
+- Recursos legacy de Lambda (función y rol) si existieran de una versión anterior del lab.
+
+Ejecución manual equivalente (fuera de GitHub Actions):
+
+```bash
+AWS_REGION=us-east-1 bash scripts/destroy.sh mi-usuario
 ```
 
 ## Pruebas

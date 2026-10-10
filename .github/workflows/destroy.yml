@@ -1,0 +1,43 @@
+name: Destroy Infrastructure (Lab 1)
+
+on:
+  workflow_dispatch:
+    inputs:
+      student_suffix:
+        description: 'Student Suffix of the resources to destroy (e.g. test-student)'
+        required: false
+        type: string
+      confirm:
+        description: 'Type "destroy" to confirm the teardown of all AWS resources'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  STUDENT_SUFFIX: ${{ inputs.student_suffix || vars.STUDENT_SUFFIX || 'test-student' }}
+
+jobs:
+  destroy:
+    name: Destroy ECS/EC2 Infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirmation input
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy" ]; then
+            echo "ERROR: You must type 'destroy' in the confirm input to proceed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run Destroy Script
+        env:
+          STUDENT_SUFFIX: ${{ env.STUDENT_SUFFIX }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: bash scripts/destroy.sh "${{ env.STUDENT_SUFFIX }}"
