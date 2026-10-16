@@ -19,12 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Poetry debe estar en el PATH ANTES de setup-python (cache: poetry lo necesita)
+      - name: Install Poetry
+        run: pipx install poetry
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: poetry
-          cache-dependency-path: poetry.lock
-      - run: pip install poetry && poetry install
+          cache: 'poetry'
+      - name: Install dependencies
+        run: |
+          poetry env use python3.12
+          poetry install --no-interaction
       - run: poetry run pylint src
 
   test:
@@ -32,12 +37,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Poetry
+        run: pipx install poetry
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: poetry
-          cache-dependency-path: poetry.lock
-      - run: pip install poetry && poetry install
+          cache: 'poetry'
+      - name: Install dependencies
+        run: |
+          poetry env use python3.12
+          poetry install --no-interaction
       - run: poetry run pytest tests -vv
 
   build_and_push:
