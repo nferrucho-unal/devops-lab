@@ -19,10 +19,10 @@ devops-lab/
 ├── scripts/
 │   ├── deploy.sh                # Script idempotente de despliegue a ECS/EC2 vía AWS CLI
 │   └── destroy.sh               # Script idempotente de destrucción de toda la infraestructura
-├── workflows/
-│   └── ci.yml                  # Definición del pipeline CI/CD (GitHub Actions)
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml              # Pipeline CI/CD (GitHub Actions)
+│       ├── ci-pruebas.yml      # Variante manual con caché, SHA, rollback y smoke test
 │       └── destroy.yml         # Workflow manual (workflow_dispatch) para destruir infraestructura
 ├── Dockerfile                  # Imagen de contenedor para la app FastAPI
 ├── pyproject.toml              # Dependencias y configuración (Poetry, pylint)
@@ -31,12 +31,10 @@ devops-lab/
 └── devops-lab1-starter.zip     # Material base/plantilla original del laboratorio
 ```
 
-> **Nota:** el archivo de workflow principal vive en [`workflows/ci.yml`](./workflows/ci.yml).
-> Para que GitHub Actions lo ejecute automáticamente debe copiarse (o enlazarse) a la ruta
-> estándar `.github/workflows/ci.yml` del repositorio. El workflow de destrucción
-> ([`destroy.yml`](./.github/workflows/destroy.yml)) sí está ubicado correctamente en
-> `.github/workflows/`, por lo que ya aparece disponible para ejecución manual desde la
-> pestaña *Actions* de GitHub.
+> El workflow existente está en [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+> La variante de pruebas está en [`.github/workflows/ci-pruebas.yml`](./.github/workflows/ci-pruebas.yml)
+> y se ejecuta manualmente para evitar despliegues simultáneos. El workflow de destrucción
+> ([`destroy.yml`](./.github/workflows/destroy.yml)) está disponible para ejecución manual.
 
 ## Aplicación
 
@@ -86,19 +84,24 @@ docker run -p 8000:8000 greeting-app
 El `Dockerfile` usa `python:3.12-slim`, instala solo dependencias de producción con
 Poetry (`--only main`) y expone el puerto `8000` ejecutando `uvicorn`.
 
-## Pipeline CI/CD ([`workflows/ci.yml`](./workflows/ci.yml))
+## Pipeline CI/CD de pruebas ([`ci-pruebas.yml`](./.github/workflows/ci-pruebas.yml))
 
-Se dispara en `push`/`pull_request` a `main` y manualmente vía `workflow_dispatch`
-(permite indicar `student_suffix` para namespacing de recursos AWS). Jobs:
+Se dispara manualmente vía `workflow_dispatch` (permite indicar `student_suffix` para
+namespacing de recursos AWS). El workflow existente `ci.yml` no se modifica. Jobs:
 
 1. **`lint`** — Instala dependencias con Poetry y corre `pylint` sobre `src`.
 2. **`test`** — Instala dependencias y corre `pytest` sobre `tests`.
-3. **`build_and_push`** *(solo en push a `main` o `workflow_dispatch`)* — Construye la
-   imagen Docker, crea el repositorio ECR si no existe, y publica las etiquetas
-   `:{sha}` y `:latest`, exponiendo la URI de imagen como output (`image_uri`).
+3. **`build_and_push`** — Construye la
+  imagen Docker con caché de capas, crea el repositorio ECR si no existe y publica una
+  única etiqueta con el SHA del commit. ECR conserva las 10 imágenes etiquetadas más
+  recientes para facilitar rollback; el job expone `image_uri`.
 4. **`deploy`** *(depende de `build_and_push`)* — Ejecuta `scripts/deploy.sh` con las
-   variables `STUDENT_SUFFIX`, `AWS_REGION` e `IMAGE_URI` para desplegar/actualizar el
-   servicio en ECS.
+  variables `STUDENT_SUFFIX`, `AWS_REGION` e `IMAGE_URI`, y verifica que `/health`
+  devuelva `{"status":"healthy"}` antes de finalizar correctamente.
+
+Los jobs `lint` y `test` usan la caché de dependencias de Poetry.
+Para hacer rollback manual, ejecuta `scripts/deploy.sh` con `IMAGE_URI` apuntando a
+una etiqueta SHA anterior que siga entre las 10 imágenes retenidas en ECR.
 
 Variables/secrets usados por el pipeline:
 

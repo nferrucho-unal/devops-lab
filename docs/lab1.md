@@ -14,9 +14,10 @@ python:3.12-slim
    └── ENTRYPOINT: uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Esta imagen se publica en **Amazon ECR** (Elastic Container Registry), que actúa como
-registro privado versionado: cada build genera dos tags, `:<git-sha>` (inmutable, para
-trazabilidad) y `:latest` (apuntador móvil al último build exitoso).
+En el workflow de pruebas, esta imagen se publica en **Amazon ECR** (Elastic Container
+Registry), que actúa como registro privado versionado. Cada ejecución publica únicamente
+`:<git-sha>`; una política conserva las 10 imágenes etiquetadas más recientes para facilitar
+rollback. El workflow original `ci.yml` se mantiene sin cambios.
 
 El tiempo de ejecución (runtime) es **Amazon ECS (Elastic Container Service) sobre
 EC2**, no Fargate, es decir, el clúster administra contenedores corriendo sobre
@@ -55,20 +56,22 @@ aprovisionada y actualizada de forma declarativa/idempotente vía AWS CLI).
 
 ### 1.2 Conceptos de CI/CD aplicados
 
-El pipeline se implementa con **GitHub Actions** y aplica los siguientes conceptos:
+La variante de pruebas (`.github/workflows/ci-pruebas.yml`) se ejecuta manualmente con
+**GitHub Actions** y aplica los siguientes conceptos:
 
 - **Integración Continua (CI):**
-  - *Build automatizado y reproducible*: cada cambio en `main` (o PR) dispara `lint`
-    (`pylint`) y `test` (`pytest`) sobre un entorno limpio (`ubuntu-latest`), usando
-    **Poetry** para fijar versiones exactas de dependencias (`poetry.lock`).
+   - *Validación automatizada y reproducible*: `lint` (`pylint`) y `test` (`pytest`) corren
+      en jobs independientes sobre `ubuntu-latest`, usando **Poetry** y `poetry.lock`.
   - *Fail-fast*: si `lint` o `test` fallan, el pipeline se detiene antes de construir
     o publicar ninguna imagen (`build_and_push` depende de `needs: [lint, test]`).
-  - *Pull Requests como gate de calidad*: el workflow corre en `pull_request` hacia
-    `main`, de modo que el código se valida antes de integrarse.
+   - El workflow original mantiene la validación automática de `push` y `pull_request`.
+      La variante de pruebas es manual para no duplicar despliegues.
 
 - **Entrega/Despliegue Continuo (CD):**
-  - *Build de artefactos inmutables*: la imagen Docker se etiqueta con el `github.sha`,
-    garantizando trazabilidad total entre un commit y la imagen desplegada.
+   - *Build de artefactos inmutables*: la imagen Docker se etiqueta solo con el
+      `github.sha`, garantizando trazabilidad entre un commit y la imagen desplegada. ECR
+      conserva las 10 imágenes etiquetadas más recientes para permitir volver a una versión
+      anterior.
   - *Registro centralizado de artefactos*: Amazon ECR como *container registry*.
   - *Despliegue automatizado e idempotente*: `scripts/deploy.sh` puede ejecutarse
     repetidamente sin duplicar recursos (verifica existencia antes de crear, y usa
@@ -82,9 +85,10 @@ El pipeline se implementa con **GitHub Actions** y aplica los siguientes concept
   - *Outputs encadenados entre jobs*: `build_and_push` expone `image_uri` como
     `output`, consumido por `deploy` vía `needs.build_and_push.outputs.image_uri`,
     evitando *hardcodear* la imagen a desplegar.
-  - *Triggers controlados*: `build_and_push` y `deploy` solo corren en `push` a `main`
-    o `workflow_dispatch` manual — nunca en PRs — evitando desplegar código no
-    integrado.
+   - *Verificación post-despliegue*: el job `deploy` consulta `/health` con reintentos y
+      falla si el servicio no devuelve `{"status":"healthy"}`.
+   - *Triggers controlados*: el workflow de pruebas usa `workflow_dispatch`; así, sus
+      jobs de build y deploy no compiten con el workflow original.
   - *Operación de rollback/limpieza como pipeline independiente*: el workflow
     [`destroy.yml`](../.github/workflows/destroy.yml) implementa el concepto de
     **pipeline bajo demanda** (`workflow_dispatch` only) para destruir el ambiente,
@@ -99,10 +103,10 @@ El pipeline se implementa con **GitHub Actions** y aplica los siguientes concept
 > Luego las imágenes se mostrarán automáticamente en este documento gracias a la
 > sintaxis Markdown ya dejada lista (`![descripción](ruta)`).
 
-### 2.1 Pipeline automático para desplegar (`.github/workflows/ci.yml`)
+### 2.1 Pipeline manual de pruebas (`.github/workflows/ci-pruebas.yml`)
 
 Pasos sugeridos para capturar la evidencia:
-1. Haz push a `main` (o dispara `workflow_dispatch` en **CI/CD Pipeline (Lab 1)**).
+1. En **Actions**, ejecuta manualmente **CI/CD Pipeline (Lab 1 - Pruebas)**.
 2. En la pestaña **Actions**, abre la ejecución y espera a que los 4 jobs terminen en OK.
 3. Captura: (a) la vista general de la ejecución con todos los jobs en verde, y
    (b) el log del job `build_and_push` mostrando el `docker push` exitoso y el

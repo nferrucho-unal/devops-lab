@@ -1,0 +1,138 @@
+name: CI/CD Pipeline (Lab 1 - Pruebas)
+
+"on":
+  workflow_dispatch:
+    inputs:
+      student_suffix:
+        description: 'Student Suffix (e.g. test-student)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  STUDENT_SUFFIX: ${{ inputs.student_suffix || vars.STUDENT_SUFFIX || 'test-student' }}
+  ECR_REPOSITORY: greeting-${{ inputs.student_suffix || vars.STUDENT_SUFFIX || 'test-student' }}
+
+jobs:
+  lint:
+    name: Lint (Pylint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: poetry
+          cache-dependency-path: poetry.lock
+      - run: pip install poetry && poetry install
+      - run: poetry run pylint src
+
+  test:
+    name: Unit Tests (Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: poetry
+          cache-dependency-path: poetry.lock
+      - run: pip install poetry && poetry install
+      - run: poetry run pytest tests -vv
+
+  build_and_push:
+    name: Build & Push Container Image
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build_image.outputs.image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: login_ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Ensure ECR Repository Exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ env.ECR_REPOSITORY }}" >/dev/null 2>&1 || \
+          aws ecr create-repository \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --tags "Key=StudentSuffix,Value=${{ env.STUDENT_SUFFIX }}"
+      - name: Retain recent image versions for rollback
+        run: |
+          aws ecr put-lifecycle-policy \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --lifecycle-policy-text '{"rules":[{"rulePriority":1,"description":"Retain the 10 most recent tagged images for rollback","selection":{"tagStatus":"tagged","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'
+      - name: Build and push commit image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.login_ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: build_image
+        env:
+          REGISTRY: ${{ steps.login_ecr.outputs.registry }}
+        run: echo "image_uri=$REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to ECS on EC2
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Run Deployment Script
+        env:
+          STUDENT_SUFFIX: ${{ env.STUDENT_SUFFIX }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          IMAGE_URI: ${{ needs.build_and_push.outputs.image_uri }}
+        run: bash scripts/deploy.sh
+      - name: Verify deployed health endpoint
+        env:
+          STUDENT_SUFFIX: ${{ env.STUDENT_SUFFIX }}
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=""
+          PUBLIC_IP=""
+          for attempt in {1..18}; do
+            INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "asg-${STUDENT_SUFFIX}" \
+              --query 'AutoScalingGroups[0].Instances[0].InstanceId' \
+              --output text 2>/dev/null || true)
+            if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]]; then
+              PUBLIC_IP=$(aws ec2 describe-instances \
+                --instance-ids "$INSTANCE_ID" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text 2>/dev/null || true)
+              if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" != "None" ]]; then
+                break
+              fi
+            fi
+            sleep 10
+          done
+
+          if [[ -z "$PUBLIC_IP" || "$PUBLIC_IP" == "None" ]]; then
+            echo "ERROR: Could not resolve the public IP of the ECS instance."
+            exit 1
+          fi
+
+          HEALTH_URL="http://${PUBLIC_IP}:8000/health"
+          echo "Checking ${HEALTH_URL}..."
+          RESPONSE=$(curl --fail --silent --show-error \
+            --retry 18 --retry-delay 10 --retry-connrefused --max-time 5 \
+            "$HEALTH_URL")
+          if [[ "$RESPONSE" != *'"status":"healthy"'* ]]; then
+            echo "ERROR: Unexpected health response: ${RESPONSE}"
+            exit 1
+          fi
+          echo "Health check passed: ${RESPONSE}"
