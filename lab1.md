@@ -49,23 +49,29 @@ Después, el job de despliegue ejecuta deploy.sh para actualizar el servicio ECS
 
 Ejecución CI/CD pipeline
 
-![Texto alternativo] /images/image1.pic
+![Imagen 1](./images/image1.png)
 
 El pipeline de GitHub Actions valida los cambios con Pylint y Pytest. En un push a main, si ambas comprobaciones pasan, construye la imagen Docker, la publica en Amazon ECR y despliega la aplicación en ECS sobre EC2. Cada imagen queda identificada por el SHA del commit. Los pull requests solo ejecutan las validaciones; no despliegan.
 
-
+![Imagen 2](./images/image2.png)
 
 ### Ejecución de Destroy.yml
 
 Pendiente parámetros para ejecución procesos de eliminación
 
-In Execution…
+![Imagen 3](./images/image3.png)
 
+In Execution…
+![Imagen 4](./images/image4.png)
+
+
+Tareas eliminadas en AWS
+![Imagen 5](./images/image5.png)
 
 
 ### Petición HTTP a la IP pública de EC2
 
-
+![Imagen 4](./images/image6.png)
 
 
 ## Propuestas para mejorar el pipeline
@@ -87,4 +93,8 @@ ci-pruebas.yml es una variante manual para probar mejoras; no reemplaza ci.yml. 
 | ECR | No configura retención de imágenes. | Conserva las 10 imágenes etiquetadas más recientes para facilitar rollback. |
 | Después del despliegue | Ejecuta deploy.sh. | Ejecuta deploy.sh y consulta /health; si no responde saludable, el workflow falla. |
 
-Importante: ci-pruebas.yml también despliega en AWS cuando lo ejecutas manualmente; no es solo un workflow de pruebas unitarias.
+## Importante:
+
+ci-pruebas.yml también despliega en AWS cuando lo ejecutas manualmente; no es solo un workflow de pruebas unitarias. 
+
+Le recomiendo lanzar la opcion accion <u>destroy.yml</u>  luego de aplicar la prueba de <u>ci_prueba.yml</u>
